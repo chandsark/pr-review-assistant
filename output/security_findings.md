@@ -1,0 +1,17 @@
+## Security Findings
+
+Source: `input/pr.diff` (line numbers refer to the new `app/auth.py`).
+
+| Severity | File:line | Finding | Suggested fix |
+|---|---|---|---|
+| P1 | app/auth.py:15 | Hardcoded API key: `API_KEY = "sk-12345prqst98765abcdefg"` | Load from environment or a secret manager (for example `os.environ["API_KEY"]`). Rotate the exposed key, since it is now in git history. |
+| P1 | app/auth.py:16 | JWT signing key is the same hardcoded value: `JWT_SECRET = API_KEY`. Anyone with repo access can forge HS256 tokens signed at line 92. | Use a separate JWT secret loaded from a secret store. Rotate it and stop reusing the API key. |
+| P1 | app/auth.py:47 | SQL injection: `query = "SELECT ... WHERE username = '%s'" % username`. Username is user-controlled and only stripped. | Use a parameterised query, e.g. `db.execute("... WHERE username = ?", (username,))`. |
+| P1 | app/auth.py:73-76 | String formatting in SQL, against the CLAUDE.md rule: `"UPDATE users SET failed_attempts = %d, locked_until = %s WHERE id = %d" % (...)`. Current inputs are server-computed, so exploitability is low, but the pattern violates the standard. | Parameterise all values: `UPDATE users SET failed_attempts = ?, locked_until = ? WHERE id = ?`. |
+| P1 | app/auth.py:80-82 | String formatting in SQL: `f"UPDATE users SET failed_attempts = 0, locked_until = NULL, last_login = {now} WHERE id = {row['id']}"` | Parameterise `now` and `row['id']` as bound values. |
+| P2 | app/auth.py:28 | Non-constant-time API key check: `if request.headers.get("X-Api-Key") != API_KEY:` | Compare with `hmac.compare_digest(provided, API_KEY)`. |
+| P2 | app/auth.py:23 | Password hashed with a single fast SHA-256 round: `hashlib.sha256((salt + password).encode("utf-8")).hexdigest()`. Fast hashes are unsuitable for password storage. | Use bcrypt, scrypt, or argon2. If PBKDF2 is used, set a high iteration count. |
+| P2 | app/auth.py:48, 52, 56, 72, 94 | Sensitive data logged: the full SQL query with username is logged at debug level (`logger.debug("running query: %s", query)`), and usernames are logged on failed, locked, and successful logins. | Remove the query from logs. Log a user ID instead of the raw username, and keep debug logging out of production. |
+| P2 | app/auth.py:53, 57, 62 | Username enumeration and lockout abuse: distinct responses `"invalid credentials"` 401, `"account disabled"` 403, and `"account locked"` 423 reveal account existence and state. Five bad passwords lock any account for 15 minutes (lines 70-72). No rate limiting on `/login`. | Return one generic 401 for all credential failures. Use per-IP or per-client rate limiting and progressive backoff instead of a hard per-account lockout. |
+| P2 | app/auth.py:32-37 | Missing input validation: `username = payload.get("username", "").strip()` and `password = payload.get("password", "")` do no type checks. Non-string values or a non-dict JSON body cause unhandled exceptions. Password has no length cap, which allows hashing-cost DoS. | Verify `isinstance(payload, dict)` and that username and password are `str`. Enforce a maximum password length (for example 128 to 256 characters). |
+| P2 | app/auth.py:85 | Client-controlled token lifetime: `ttl = TOKEN_TTL_SECONDS * 24 if remember_me else TOKEN_TTL_SECONDS` issues 24-hour bearer tokens on request, with no revocation path visible in the diff. | Cap the lifetime server-side, use short-lived access tokens with refresh tokens, and add a revocation mechanism. |

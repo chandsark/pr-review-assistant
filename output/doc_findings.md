@@ -1,0 +1,9 @@
+## Documentation Findings
+
+| Severity | File:line | Finding | Suggested fix |
+|---|---|---|---|
+| P2 | app/auth.py:71 | Public route handler `login()` (about 77 lines, 71-147) has no docstring. It takes JSON credentials, the `X-Api-Key` header, and an optional `remember_me` flag, and returns 401/400/403/423 responses. | Add a docstring covering the request body fields, required headers, `remember_me` TTL extension, the response payload (`access_token`, `token_type`, `expires_in`, `user`), and each error status code. |
+| P3 | app/auth.py:71 | `login()` has no type hints, and no return annotation. | Add a return annotation (e.g. `-> flask.Response` or `-> tuple[Response, int]`, matching the actual return type). |
+| P3 | app/auth.py (constants block) | `API_KEY`, `JWT_SECRET`, `TOKEN_TTL_SECONDS=3600`, `MAX_FAILED_ATTEMPTS=5` and `LOCKOUT_SECONDS=900` are added without comments. The lockout and TTL behaviour they control is not explained. | Add a short comment above each constant stating its purpose, units, and where the value is loaded from. Do not put the secret value in the comment. |
+| P3 | README.md:28 | The README import example `from app.api.authentication import login` points to a module that does not exist in this diff. The new module is `app/auth.py`, so the import path is `app.auth`. This is a broken README reference. | Change the example to `from app.auth import login`, or move the code to `app/api/authentication.py` so the README is correct. |
+| P3 | README.md:20-28 | The new Authentication section does not document the `remember_me` option, the 401/400/403/423 error codes, the 5-attempt / 15-minute lockout, or the configuration the endpoint needs (`API_KEY`, `JWT_SECRET`). Callers cannot use the endpoint correctly from the README alone. | Add a short subsection listing the optional `remember_me` field, the error responses and their meanings, the lockout policy, and the environment variables that must be set. |
