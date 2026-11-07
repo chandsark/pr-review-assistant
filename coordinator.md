@@ -5,6 +5,11 @@ Produce a code review report for the diff named in the request (default: input/p
   
 ## Steps 
 1. Read the diff file once using the Read tool. 
+1a. VALIDATE the input before launching any sub-agent. It is a valid diff only if it contains
+   at least one `diff --git` (or `--- a/` and `+++ b/`) header AND at least one `@@` hunk header.
+   If not: STOP. Launch no sub-agents. Do not write output/review_report.md and do not emit any
+   GATE line (a gate verdict on unreviewed input would be misleading). Reply to the user with
+   "INPUT ERROR: <file> is not a valid unified diff (missing: <diff header | hunk header>)".
 2. In a single step, launch these three sub-agents IN PARALLEL. 
    Pass each one the full diff text — they do not share your context: 
      - security-agent → P1/P2 security findings table 
