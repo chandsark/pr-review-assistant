@@ -1,0 +1,20 @@
+{ 
+  "model": "sonnet", 
+  "permissions": { 
+    "allow": [ 
+      "Bash(git status)", 
+      "Bash(git diff:*)", 
+      "Bash(git log:*)" 
+    ] 
+  }, 
+  "hooks": { 
+    "PreToolUse": [ 
+      { 
+        "matcher": "Write|Edit|Bash", 
+        "hooks": [ 
+          { "type": "command", "command": "node .claude/hooks/pre_tool_use.js" } 
+        ] 
+      } 
+    ] 
+  } 
+} 

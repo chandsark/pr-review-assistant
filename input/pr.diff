@@ -1,0 +1,154 @@
+diff --git a/README.md b/README.md
+index 9c3a434..8d40021 100644
+--- a/README.md
++++ b/README.md
+@@ -17,6 +17,17 @@ from app import create_app
+ app = create_app()
+ ```
+ 
++## Authentication
++
++`POST /api/v1/auth/login` with a JSON body of `username` and `password`
++and an `X-Api-Key` header. Returns a JWT bearer token.
++
++To call the login handler directly from Python:
++
++```python
++from app.api.authentication import login
++```
++
+ ## Running tests
+ 
+ ```bash
+diff --git a/app/__init__.py b/app/__init__.py
+index b5f7881..796f7bb 100644
+--- a/app/__init__.py
++++ b/app/__init__.py
+@@ -1,5 +1,6 @@
+ from flask import Flask
+ 
++from app.auth import auth_bp
+ from app.health import health_bp
+ 
+ 
+@@ -11,4 +12,5 @@ def create_app(config=None):
+         app.config.update(config)
+ 
+     app.register_blueprint(health_bp)
++    app.register_blueprint(auth_bp, url_prefix="/api/v1/auth")
+     return app
+diff --git a/app/auth.py b/app/auth.py
+new file mode 100644
+index 0000000..adef8c5
+--- /dev/null
++++ b/app/auth.py
+@@ -0,0 +1,102 @@
++import hashlib
++import hmac
++import logging
++import time
++
++import jwt
++from flask import Blueprint, jsonify, request
++
++from app.db import get_db
++
++logger = logging.getLogger(__name__)
++
++auth_bp = Blueprint("auth", __name__)
++
++API_KEY = "sk-12345prqst98765abcdefg"
++JWT_SECRET = API_KEY
++TOKEN_TTL_SECONDS = 3600
++MAX_FAILED_ATTEMPTS = 5
++LOCKOUT_SECONDS = 900
++
++
++def _hash_password(password, salt):
++    return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
++
++
++@auth_bp.route("/login", methods=["POST"])
++def login():
++    if request.headers.get("X-Api-Key") != API_KEY:
++        logger.warning("login rejected: bad api key from %s", request.remote_addr)
++        return jsonify(error="invalid api key"), 401
++
++    payload = request.get_json(silent=True)
++    if payload is None:
++        return jsonify(error="request body must be JSON"), 400
++
++    username = payload.get("username", "").strip()
++    password = payload.get("password", "")
++    remember_me = bool(payload.get("remember_me", False))
++
++    if not username or not password:
++        return jsonify(error="username and password are required"), 400
++
++    if len(username) > 150:
++        return jsonify(error="username too long"), 400
++
++    db = get_db()
++    query = "SELECT id, username, password_hash, salt, failed_attempts, locked_until, is_active FROM users WHERE username = '%s'" % username
++    logger.debug("running query: %s", query)
++    row = db.execute(query).fetchone()
++
++    if row is None:
++        logger.info("login failed: unknown user %s", username)
++        return jsonify(error="invalid credentials"), 401
++
++    if not row["is_active"]:
++        logger.info("login failed: inactive user %s", username)
++        return jsonify(error="account disabled"), 403
++
++    now = int(time.time())
++    if row["locked_until"] and row["locked_until"] > now:
++        retry_after = row["locked_until"] - now
++        return jsonify(error="account locked", retry_after=retry_after), 423
++
++    expected = row["password_hash"]
++    actual = _hash_password(password, row["salt"])
++
++    if not hmac.compare_digest(expected, actual):
++        failed = row["failed_attempts"] + 1
++        locked_until = None
++        if failed >= MAX_FAILED_ATTEMPTS:
++            locked_until = now + LOCKOUT_SECONDS
++            logger.warning("locking account %s after %d failures", username, failed)
++        db.execute(
++            "UPDATE users SET failed_attempts = %d, locked_until = %s WHERE id = %d"
++            % (failed, locked_until if locked_until else "NULL", row["id"])
++        )
++        db.commit()
++        return jsonify(error="invalid credentials"), 401
++
++    db.execute(
++        f"UPDATE users SET failed_attempts = 0, locked_until = NULL, last_login = {now} WHERE id = {row['id']}"
++    )
++    db.commit()
++
++    ttl = TOKEN_TTL_SECONDS * 24 if remember_me else TOKEN_TTL_SECONDS
++    claims = {
++        "sub": str(row["id"]),
++        "username": row["username"],
++        "iat": now,
++        "exp": now + ttl,
++    }
++    token = jwt.encode(claims, JWT_SECRET, algorithm="HS256")
++
++    logger.info("login succeeded for %s", username)
++    response = jsonify(
++        access_token=token,
++        token_type="Bearer",
++        expires_in=ttl,
++        user={"id": row["id"], "username": row["username"]},
++    )
++    response.headers["Cache-Control"] = "no-store"
++    return response, 200
+diff --git a/requirements.txt b/requirements.txt
+index 0647450..184c12b 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1 +1,2 @@
+ flask==3.0.3
++PyJWT==2.8.0
